@@ -1,0 +1,108 @@
+* netdata中文汉化
+  准备工作:
+  #+begin_src bash
+    git clone https://github.com/honmaple/netdata.git --depth=1
+    cd netdata && mkdir config
+    echo -e '[web]\ncustom dashboard_info.js = dashboard_info_custom.js' >> config/netdata.conf
+  #+end_src
+
+** Docker部署
+   #+begin_src bash
+     docker run -d --name=netdata \
+            -p 19999:19999 \
+            -v `pwd`/config/netdata.conf:/etc/netdata/netdata.conf \
+            -v `pwd`/dashboard_info.js:/usr/share/netdata/web/dashboard_info_custom.js \
+            -v /proc:/host/proc:ro \
+            -v /sys:/host/sys:ro \
+            --cap-add SYS_PTRACE \
+            --security-opt apparmor=unconfined \
+            netdata/netdata
+   #+end_src
+
+** Docker-Compose部署
+   #+begin_src yaml
+     version: '3'
+     services:
+       netdata:
+         image: netdata/netdata
+         container_name: netdata
+         hostname: example.com # set to fqdn of host
+         ports:
+           - 19999:19999
+         restart: unless-stopped
+         cap_add:
+           - SYS_PTRACE
+         security_opt:
+           - apparmor:unconfined
+         volumes:
+           - ./cache:/var/cache/netdata
+           - ./config/netdata.conf:/etc/netdata/netdata.conf:ro
+           - /etc/passwd:/host/etc/passwd:ro
+           - /etc/group:/host/etc/group:ro
+           - /proc:/host/proc:ro
+           - /sys:/host/sys:ro
+             - /etc/os-release:/host/etc/os-release:ro
+   #+end_src
+
+** Nginx配置
+   具体请参考[[https://learn.netdata.cloud/docs/agent/running-behind-nginx][官方文档]]
+   #+begin_src nginx
+     upstream netdata {
+         server 127.0.0.1:19999;
+         keepalive 64;
+     }
+
+     server {
+         listen 80;
+         # uncomment the line if you want nginx to listen on IPv6 address
+         #listen [::]:80;
+
+         # the virtual host name of this subfolder should be exposed
+         #server_name netdata.example.com;
+
+         location = /netdata {
+             return 301 /netdata/;
+         }
+
+         location ~ /netdata/(?<ndpath>.*) {
+             proxy_redirect off;
+             proxy_set_header Host $host;
+
+             proxy_set_header X-Forwarded-Host $host;
+             proxy_set_header X-Forwarded-Server $host;
+             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+             proxy_http_version 1.1;
+             proxy_pass_request_headers on;
+             proxy_set_header Connection "keep-alive";
+             proxy_store off;
+             proxy_pass http://netdata/$ndpath$is_args$args;
+
+             gzip on;
+             gzip_proxied any;
+             gzip_types *;
+         }
+     }
+   #+end_src
+
+* FAQ
+** 获取全部配置
+   #+begin_src bash
+     # 进入镜像
+     docker run --entrypoint /bin/bash --rm -it netdata/netdata
+     # 下载配置文件
+     wget -O /etc/netdata/netdata.conf http://localhost:19999/netdata.conf
+   #+end_src
+** 配置basic auth验证
+   - 创建用户和密码
+     #+begin_src bash
+       printf "yourusername:$(openssl passwd -apr1)" > /etc/nginx/passwords
+     #+end_src
+   - 添加nginx配置
+     #+begin_src nginx
+       server {
+           # ...
+           auth_basic "Protected";
+           auth_basic_user_file passwords;
+           # ...
+       }
+     #+end_src

@@ -1,0 +1,3 @@
+[submodule "netdata"]
+	path = netdata
+	url = https://github.com/netdata/netdata.git
